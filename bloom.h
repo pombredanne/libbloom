@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2012, Jyri J. Virkki
+ *  Copyright (c) 2012-2015, Jyri J. Virkki
  *  All rights reserved.
  *
  *  This file is under BSD license. See LICENSE file.
@@ -8,16 +8,28 @@
 #ifndef _BLOOM_H
 #define _BLOOM_H
 
+
+/** ***************************************************************************
+ * On Linux, the code attempts to compute a bucket size based on CPU cache
+ * size info, if available. If that fails for any reason, this fallback size
+ * is used instead.
+ *
+ * On non-Linux systems, this is the bucket size always used.
+ *
+ */
 #define BLOOM_BUCKET_SIZE_FALLBACK (8 * 1024)
 
-/**
- * It was found that using multiplier x0.5
- * for CPU L1 cache size is more effective
- * in terms of CPU usage and, surprisingly, collisions number.
+
+/** ***************************************************************************
+ * It was found that using multiplier x0.5 for CPU L1 cache size is
+ * more effective in terms of CPU usage and, surprisingly, collisions
+ * number.
  *
  * Feel free to tune this constant the way it will work for you.
+ *
  */
 #define BLOOM_L1_CACHE_SIZE_DIV 1
+
 
 /** ***************************************************************************
  * Structure to keep track of one bloom filter.  Caller needs to
@@ -41,6 +53,7 @@ struct bloom
   // on these.
   unsigned buckets;
   unsigned bucket_bytes;
+
   // x86 CPU divide by/multiply by operation optimization helpers
   unsigned bucket_bytes_exponent;
   unsigned bucket_bits_fast_mod_operand;
@@ -78,6 +91,21 @@ struct bloom
  *
  */
 int bloom_init(struct bloom * bloom, int entries, double error);
+
+
+/** ***************************************************************************
+ * Initialize the bloom filter for use.
+ *
+ * See comments above for general information.
+ *
+ * This is the same as bloom_init() but allows the caller to pass in a
+ * cache_size to override the internal value (which is either computed
+ * or the default of BLOOM_BUCKET_SIZE_FALLBACK). Mostly useful for
+ * experimenting.
+ *
+ */
+int bloom_init_size(struct bloom * bloom, int entries, double error,
+                    unsigned int cache_size);
 
 
 /** ***************************************************************************
@@ -142,5 +170,15 @@ void bloom_print(struct bloom * bloom);
  *
  */
 void bloom_free(struct bloom * bloom);
+
+
+/** ***************************************************************************
+ * Returns version string compiled into library.
+ *
+ * Return: version string
+ *
+ */
+const char * bloom_version();
+
 
 #endif
