@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2012-2015, Jyri J. Virkki
+ *  Copyright (c) 2012-2016, Jyri J. Virkki
  *  All rights reserved.
  *
  *  This file is under BSD license. See LICENSE file.
@@ -8,28 +8,9 @@
 #ifndef _BLOOM_H
 #define _BLOOM_H
 
-
-/** ***************************************************************************
- * On Linux, the code attempts to compute a bucket size based on CPU cache
- * size info, if available. If that fails for any reason, this fallback size
- * is used instead.
- *
- * On non-Linux systems, this is the bucket size always used unless the
- * caller overrides it (see bloom_init_size()).
- *
- */
-#define BLOOM_BUCKET_SIZE_FALLBACK (32 * 1024)
-
-
-/** ***************************************************************************
- * It was found that using multiplier x0.5 for CPU L1 cache size is
- * more effective in terms of CPU usage and, surprisingly, collisions
- * number.
- *
- * Feel free to tune this constant the way it will work for you.
- *
- */
-#define BLOOM_L1_CACHE_SIZE_DIV 1
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 
 /** ***************************************************************************
@@ -52,13 +33,6 @@ struct bloom
   // Fields below are private to the implementation. These may go away or
   // change incompatibly at any moment. Client code MUST NOT access or rely
   // on these.
-  unsigned buckets;
-  unsigned bucket_bytes;
-
-  // x86 CPU divide by/multiply by operation optimization helpers
-  unsigned bucket_bytes_exponent;
-  unsigned bucket_bits_fast_mod_operand;
-
   double bpe;
   unsigned char * bf;
   int ready;
@@ -95,17 +69,7 @@ int bloom_init(struct bloom * bloom, int entries, double error);
 
 
 /** ***************************************************************************
- * Initialize the bloom filter for use.
- *
- * See comments above for general information.
- *
- * This is the same as bloom_init() but allows the caller to pass in a
- * cache_size to override the internal value (which is either computed
- * or the default of BLOOM_BUCKET_SIZE_FALLBACK). Mostly useful for
- * experimenting.
- *
- * See misc/bucketsize for a script which can help identify a good value
- * for cache_size.
+ * Deprecated, use bloom_init()
  *
  */
 int bloom_init_size(struct bloom * bloom, int entries, double error,
@@ -184,5 +148,8 @@ void bloom_free(struct bloom * bloom);
  */
 const char * bloom_version();
 
+#ifdef __cplusplus
+}
+#endif
 
 #endif

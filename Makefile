@@ -1,5 +1,5 @@
-
-# Copyright (c) 2012-2015, Jyri J. Virkki
+#
+# Copyright (c) 2012-2017, Jyri J. Virkki
 # All rights reserved.
 #
 # This file is under BSD license. See LICENSE file.
@@ -10,18 +10,20 @@
 # Other build options:
 #
 #   DEBUG=1 make        to build debug instead of optimized
-#   MM=-m32 make        to build 32bit library
+#   BITS=32 make        to build 32bit library
+#   BITS=default make	to build platform default bitness (32 or 64)
 #
 # Other build targets:
 #
 #   make test           to build and run test code
+#   make release_test   to build and run larger tests
 #   make gcov           to build with code coverage and run gcov
-#   make lint           to run lint
 #   make clean          the usual
-#   make perf_report    generate perf reports (see README.perf)
 #
 
-BLOOM_VERSION=1.2
+BLOOM_VERSION_MAJOR=1
+BLOOM_VERSION_MINOR=4
+BLOOM_VERSION=$(BLOOM_VERSION_MAJOR).$(BLOOM_VERSION_MINOR)
 
 TOP := $(shell /bin/pwd)
 BUILD_OS := $(shell uname)
@@ -29,42 +31,53 @@ BUILD_OS := $(shell uname)
 BUILD=$(TOP)/build
 INC=-I$(TOP) -I$(TOP)/murmur2
 LIB=-lm
-CC=gcc -Wall ${OPT} ${MM} -std=c99 -fPIC -D_GNU_SOURCE -DBLOOM_VERSION=$(BLOOM_VERSION)
+COM=${CC} $(CFLAGS) $(CPPFLAGS) -Wall ${OPT} ${MM} -std=c99 -fPIC -DBLOOM_VERSION=$(BLOOM_VERSION)
+TESTDIR=$(TOP)/misc/test
 
-#
-# Defines used by the perf_test target
-#
-HEAD=$(shell git log -1 --format="%h_%f")
-ifndef HOSTNAME
-HOSTNAME=$(shell hostname)
-endif
-PERF_TEST_DIR=$(TOP)/perf_reports
-PERF_TEST_DIR_HEAD=$(PERF_TEST_DIR)/$(HEAD)
-PERF_TEST_DIR_CPU=$(PERF_TEST_DIR_HEAD)/$(HOSTNAME)_$(CPU_ID)
-CPU_ID=$(shell $(PERF_TEST_DIR)/cpu_id)
-
-
-ifeq ($(MM),)
+ifeq ($(BITS),)
 MM=-m64
+else ifeq ($(BITS),64)
+MM=-m64
+else ifeq ($(BITS),32)
+MM=-m32
+else ifeq ($(BITS),default)
+MM=
+else
+MM=$(BITS)
 endif
 
-ifeq ($(BUILD_OS),Linux)
-RPATH=-Wl,-rpath,$(BUILD)
+#
+# Shared library names - these definitions work on most platforms but can
+# be overridden in the platform-specific sections below.
+#
+BLOOM_SONAME=libbloom.so.$(BLOOM_VERSION_MAJOR)
+SO_VERSIONED=libbloom.so.$(BLOOM_VERSION)
+LD_SONAME=-Wl,-soname,$(BLOOM_SONAME)
 SO=so
-LINUX_BO=$(BUILD)/linux.o
-LINUX_O=linux.o
-PERF_STAT=perf stat --log-fd 1
+
+
+ifeq ($(BUILD_OS),$(filter $(BUILD_OS), GNU/kFreeBSD GNU Linux))
+RPATH=-Wl,-rpath,$(BUILD)
 endif
 
 ifeq ($(BUILD_OS),SunOS)
 RPATH=-R$(BUILD)
-SO=so
+CC=gcc
+endif
+
+ifeq ($(BUILD_OS),OpenBSD)
+RPATH=-R$(BUILD)
 endif
 
 ifeq ($(BUILD_OS),Darwin)
-MAC=-install_name $(BUILD)/libbloom.dylib
+MAC=-install_name $(BUILD)/libbloom.dylib \
+	-compatibility_version $(BLOOM_VERSION_MAJOR) \
+	-current_version $(BLOOM_VERSION)
 RPATH=-Xlinker -rpath -Xlinker $(BUILD)
 SO=dylib
+BLOOM_SONAME=libbloom.$(BLOOM_VERSION_MAJOR).$(SO)
+SO_VERSIONED=libbloom.$(BLOOM_VERSION).$(SO)
+LD_SONAME=
 endif
 
 ifeq ($(DEBUG),1)
@@ -74,51 +87,79 @@ OPT=-O3
 endif
 
 
-all: $(BUILD)/libbloom.$(SO) $(BUILD)/test-libbloom
+all: $(BUILD)/$(SO_VERSIONED) $(BUILD)/libbloom.a
 
-$(BUILD)/libbloom.$(SO): $(BUILD)/murmurhash2.o $(BUILD)/bloom.o $(LINUX_BO)
-	(cd $(BUILD) && $(CC) bloom.o murmurhash2.o $(LINUX_O) -shared $(LIB) $(MAC) -o libbloom.$(SO))
+$(BUILD)/$(SO_VERSIONED): $(BUILD)/murmurhash2.o $(BUILD)/bloom.o
+	(cd $(BUILD) && \
+	    $(COM) $(LDFLAGS) bloom.o murmurhash2.o -shared $(LIB) $(MAC) \
+		$(LD_SONAME) -o $(SO_VERSIONED) && \
+		ln -s $(SO_VERSIONED) $(BLOOM_SONAME) && \
+		ln -s $(BLOOM_SONAME) libbloom.$(SO))
 
-$(BUILD)/test-libbloom: $(BUILD)/libbloom.$(SO) $(BUILD)/test.o
-	(cd $(BUILD) && $(CC) test.o -L$(BUILD) $(RPATH) -lbloom -o test-libbloom)
+$(BUILD)/libbloom.a: $(BUILD)/murmurhash2.o $(BUILD)/bloom.o
+	(cd $(BUILD) && ar rcs libbloom.a bloom.o murmurhash2.o)
+
+$(BUILD)/test-libbloom: $(TESTDIR)/test.c $(BUILD)/$(SO_VERSIONED)
+	$(COM) -I$(TOP) -c $(TESTDIR)/test.c -o $(BUILD)/test.o
+	(cd $(BUILD) && \
+	    $(COM) test.o -L$(BUILD) $(RPATH) -lbloom -o test-libbloom)
+
+$(BUILD)/test-basic: $(TESTDIR)/basic.c $(BUILD)/libbloom.a
+	$(COM) -I$(TOP) $(LIB) \
+	    $(TESTDIR)/basic.c $(BUILD)/libbloom.a -o $(BUILD)/test-basic
 
 $(BUILD)/%.o: %.c
 	mkdir -p $(BUILD)
-	$(CC) $(INC) -c $< -o $@
+	$(COM) $(INC) -c $< -o $@
 
 $(BUILD)/murmurhash2.o: murmur2/MurmurHash2.c murmur2/murmurhash2.h
 	mkdir -p $(BUILD)
-	$(CC) $(INC) -c murmur2/MurmurHash2.c -o $(BUILD)/murmurhash2.o
+	$(COM) $(INC) -c murmur2/MurmurHash2.c -o $(BUILD)/murmurhash2.o
 
 clean:
 	rm -rf $(BUILD)
 
-lint:
-	lint -x -errfmt=simple $(INC) $(LIB) *.c murmur2/*.c
-
-test: $(BUILD)/test-libbloom
+test: $(BUILD)/test-libbloom $(BUILD)/test-basic
+	$(BUILD)/test-basic
 	$(BUILD)/test-libbloom
 
-
-.PHONY: perf_report
-perf_report: $(BUILD)/test-libbloom
-	mkdir -p $(PERF_TEST_DIR_CPU)
-	$(PERF_STAT) $(BUILD)/test-libbloom -p  5000000  5000000 | tee $(PERF_TEST_DIR_CPU)/test_1.log
-	$(PERF_STAT) $(BUILD)/test-libbloom -p 10000000 10000000 | tee $(PERF_TEST_DIR_CPU)/test_2.log
-	$(PERF_STAT) $(BUILD)/test-libbloom -p 50000000 50000000 | tee $(PERF_TEST_DIR_CPU)/test_3.log
-ifeq ($(BUILD_OS),Linux)
-	lscpu > ${PERF_TEST_DIR_CPU}/lscpu.log
-	inxi -Cm -c0 > ${PERF_TEST_DIR_CPU}/inxi.log 2>/dev/null || inxi -C -c0 > ${PERF_TEST_DIR_CPU}/inxi.log
-endif
-
 vtest: $(BUILD)/test-libbloom
-	valgrind --tool=memcheck --leak-check=full $(BUILD)/test-libbloom
+	valgrind --tool=memcheck --leak-check=full --show-reachable=yes \
+	    $(BUILD)/test-libbloom
 
 gcov:
 	$(MAKE) clean
-	DEBUG=1 DEBUGOPT="-fprofile-arcs -ftest-coverage" $(MAKE) all
+	DEBUG=1 DEBUGOPT="-fprofile-arcs -ftest-coverage" \
+	    $(MAKE) $(BUILD)/test-libbloom
 	(cd $(BUILD) && \
-		cp ../*.c . && \
-		./test-libbloom && \
-		gcov -bf bloom.c)
+	    cp ../*.c . && \
+	    ./test-libbloom && \
+	    gcov -bf bloom.c)
 	@echo Remember to make clean to remove instrumented objects
+
+#
+# This target runs a test which creates a filter of capacity N and inserts
+# N elements, for N in 100,000 to 1,000,000 with an expected error of 0.001.
+# To preserve and graph the output, move it to ./misc/collisions and use
+# the ./misc/collisions/dograph script to plot it.
+#
+# WARNING: This can take a very long time (on a slow machine, multiple days)
+# to run.
+#
+collision_test: $(BUILD)/test-libbloom
+	$(BUILD)/test-libbloom -G 100000 1000000 10 0.001 \
+	    | tee collision_data_v$(BLOOM_VERSION)
+
+#
+# This target should be run when preparing a release, includes more tests
+# than the 'test' target.
+# For a final release, should run the collision_test target above as well,
+# not included here as it takes so long.
+#
+release_test:
+	$(MAKE) test
+	$(MAKE) vtest
+	$(BUILD)/test-libbloom -G 100000 1000000 50000 0.001 \
+	    | tee short_coll_data
+	gzip short_coll_data
+	./misc/collisions/dograph short_coll_data.gz
